@@ -4,7 +4,11 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from backtest_engine import run_backtest, auto_optimize_model_and_strategy
+from backtest_engine import (
+    auto_optimize_model_and_strategy,
+    auto_select_best_strategy,
+    run_backtest,
+)
 from ml_pipeline import prepare_data, time_series_scores
 
 st.set_page_config(page_title="Yahoo Finance ML Trading Simulator", layout="wide")
@@ -31,41 +35,86 @@ with st.sidebar:
     end = st.date_input("End date", value=pd.Timestamp.today())
     interval = st.selectbox("Interval", ["1d", "1wk", "1mo"], index=0)
 
-    strategy_name = st.selectbox(
-        "Strategy",
-        ["classification", "regression", "walk_forward_anchored", "walk_forward_unanchored"],
+    mode = st.radio(
+        "Mode",
+        ["Manual", "Auto-optimize selected strategy", "Auto-select best strategy"],
+        index=0,
     )
 
-    full_auto_optimize = st.checkbox("Auto-optimize model + thresholds", value=False)
+    objective = st.selectbox(
+        "Optimization target",
+        ["Balanced", "Sharpe Ratio", "Return [%]"],
+        index=0,
+    )
 
-    if full_auto_optimize:
-        st.info("Training window, tree depth, and thresholds will be selected automatically.")
-        objective = st.selectbox(
-            "Optimization target",
-            ["Sharpe Ratio", "Return [%]"],
-            index=0,
+    if mode == "Manual":
+        strategy_name = st.selectbox(
+            "Strategy",
+            ["classification", "regression", "walk_forward_anchored", "walk_forward_unanchored"],
         )
-        n_train = None
-        reg_depth = None
-        clf_depth = None
-        optimize = False
-    else:
         n_train = st.slider("Initial training window", min_value=200, max_value=1000, value=600, step=50)
         reg_depth = st.slider("Regression tree depth", min_value=2, max_value=25, value=15)
         clf_depth = st.slider("Classification tree depth", min_value=2, max_value=25, value=8)
         optimize = st.checkbox("Optimize thresholds", value=False)
-        objective = st.selectbox(
-            "Optimization target",
-            ["Sharpe Ratio", "Return [%]"],
-            index=0,
+
+    elif mode == "Auto-optimize selected strategy":
+        strategy_name = st.selectbox(
+            "Strategy",
+            ["classification", "regression", "walk_forward_anchored", "walk_forward_unanchored"],
         )
+        st.info("Training window, tree depth, and thresholds will be selected automatically.")
+        n_train = None
+        reg_depth = None
+        clf_depth = None
+        optimize = False
+
+    else:
+        strategy_name = None
+        st.info("The app will test all strategies and choose the best one automatically.")
+        n_train = None
+        reg_depth = None
+        clf_depth = None
+        optimize = False
 
     run_btn = st.button("Run simulation", type="primary")
 
 
 if run_btn:
     try:
-        if full_auto_optimize:
+        chosen_strategy_name = strategy_name
+
+        if mode == "Auto-select best strategy":
+            bundle = auto_select_best_strategy(
+                prepare_data_fn=prepare_data,
+                ticker=ticker,
+                start=str(start),
+                end=str(end),
+                interval=interval,
+                cash=10000,
+                commission=0.002,
+                objective=objective,
+            )
+
+            prepared = bundle["best_prepared"]
+            bt = bundle["best_bt"]
+            stats = bundle["best_stats"]
+            heatmap = bundle["best_heatmap"]
+            best_params = bundle["best_params"]
+            strategy_ranking = bundle["strategy_ranking"]
+            chosen_strategy_name = bundle["best_strategy_name"]
+
+            st.success(f"Best strategy selected automatically: {chosen_strategy_name}")
+
+            st.subheader("Strategy ranking")
+            st.dataframe(make_display_df(strategy_ranking), width="stretch")
+
+            st.subheader("Chosen best parameter set")
+            best_params_df = pd.DataFrame(
+                [{"Parameter": k, "Value": str(v)} for k, v in best_params.items()]
+            )
+            st.dataframe(best_params_df, width="stretch")
+
+        elif mode == "Auto-optimize selected strategy":
             bundle = auto_optimize_model_and_strategy(
                 prepare_data_fn=prepare_data,
                 ticker=ticker,
@@ -85,7 +134,7 @@ if run_btn:
             best_params = bundle["best_params"]
             search_results = bundle["search_results"]
 
-            st.success("Auto-optimization complete.")
+            st.success(f"Auto-optimization complete for: {strategy_name}")
 
             st.subheader("Best parameter set")
             best_params_df = pd.DataFrame(
@@ -108,7 +157,7 @@ if run_btn:
             )
 
             bt, stats, heatmap = run_backtest(
-                prepared,
+                prepared=prepared,
                 strategy_name=strategy_name,
                 optimize=optimize,
                 objective=objective,
@@ -121,6 +170,9 @@ if run_btn:
         k2.metric("CV regression MSE", round(scores["regression_cv_mse"], 4))
         k3.metric("CV classification accuracy", f"{scores['classification_cv_accuracy']:.2%}")
         k4.metric("Backtest return", f"{float(stats['Return [%]']):.2f}%")
+
+        st.subheader("Selected strategy")
+        st.write(chosen_strategy_name)
 
         st.subheader("Prepared dataset preview")
         st.dataframe(prepared.df.tail(20), width="stretch")
@@ -153,21 +205,18 @@ if run_btn:
         if heatmap is not None:
             st.subheader("Optimization results")
             heatmap_df = heatmap.reset_index()
-
             sort_col = "Return [%]" if "Return [%]" in heatmap_df.columns else heatmap_df.columns[-1]
             heatmap_df = heatmap_df.sort_values(sort_col, ascending=False)
             st.dataframe(make_display_df(heatmap_df.head(20)), width="stretch")
 
-        st.subheader("What this app integrates from your notebooks")
+        st.subheader("How the automatic selection works")
         st.markdown(
             """
-            - Data preprocessing and next-day target creation
-            - Decision tree **classification** and **regression** modeling
-            - In-sample vs walk-forward style evaluation
-            - Parameter optimization with `backtesting.py`
-            - Full auto-optimization of model + thresholds
-            - Anchored and unanchored retraining logic based on your `strategies.py`
-            - Yahoo Finance ticker input so you can test any supported symbol
+            - **Sharpe Ratio** favors stable, risk-adjusted performance
+            - **Return [%]** favors raw profit
+            - **Balanced** combines Sharpe, return, drawdown, win rate, and trade count
+            - **Walk Forward Anchored** keeps all past data when retraining
+            - **Walk Forward Unanchored** uses only the most recent rolling window
             """
         )
 
