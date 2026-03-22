@@ -8,6 +8,7 @@ from backtest_engine import objective_score_from_stats, run_backtest
 from ml_pipeline import (
     BASE_FEATURES,
     assess_model,
+    backward_feature_selection,
     evaluate_clustering_suite,
     evaluate_outlier_suite,
     evaluate_time_series_suite,
@@ -20,7 +21,8 @@ st.set_page_config(page_title="Yahoo Finance ML Trading Simulator", layout="wide
 st.title("Yahoo Finance ML Trading Simulator")
 st.caption(
     "Pick a ticker and click Run simulation. The app automatically runs the full model suite, "
-    "assesses predictive quality, optimizes trading thresholds, and ranks the results."
+    "assesses predictive quality, optimizes trading thresholds, applies backward feature selection "
+    "to the best model, and ranks the results."
 )
 
 
@@ -233,6 +235,93 @@ if run_btn:
         st.subheader("Automated leaderboard")
         st.dataframe(make_display_df(leaderboard), width="stretch")
 
+        # Backward selection on the top-ranked model
+        best_key = None
+        for key, bundle in details.items():
+            row = bundle["best_row"]
+            if (
+                row["task"] == best["task"]
+                and row["model_name"] == best["model_name"]
+                and row["training_style"] == best["training_style"]
+                and str(row["model_params"]) == str(best["model_params"])
+                and row["n_train"] == best["n_train"]
+            ):
+                best_key = key
+                break
+
+        if best_key is not None:
+            best_bundle = details[best_key]
+            best_prepared = best_bundle["prepared"]
+
+            selected_features, selection_history = backward_feature_selection(best_prepared)
+
+            refined_prepared = prepare_data(
+                ticker=ticker,
+                start=str(start),
+                end=str(end),
+                interval=interval,
+                n_train=best_prepared.n_train,
+                task=best_prepared.task,
+                model_name=best_prepared.model_name,
+                training_style=best_prepared.training_style,
+                model_params=best_prepared.model_params,
+                feature_columns=selected_features,
+            )
+
+            refined_assess = assess_model(refined_prepared)
+            _, refined_stats, refined_heatmap = run_backtest(
+                prepared=refined_prepared,
+                optimize=True,
+                objective=ranking_objective,
+            )
+
+            st.markdown("---")
+            st.subheader("Best model refinement with backward feature selection")
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Original feature count", len(best_prepared.feature_columns))
+            c2.metric("Selected feature count", len(selected_features))
+            c3.metric(
+                "Refined objective score",
+                f"{objective_score_from_stats(refined_stats, ranking_objective):.4f}",
+            )
+
+            st.write("Selected features")
+            st.dataframe(
+                pd.DataFrame({"Selected Feature": selected_features}),
+                width="stretch",
+            )
+
+            st.write("Backward selection history")
+            st.dataframe(make_display_df(selection_history), width="stretch")
+
+            st.write("Refined model assessment")
+            refined_assess_df = pd.DataFrame(
+                [{"Metric": k, "Value": str(v)} for k, v in refined_assess.items()]
+            )
+            st.dataframe(refined_assess_df, width="stretch")
+
+            st.write("Refined backtest summary")
+            if hasattr(refined_stats, "to_frame"):
+                refined_summary = refined_stats.to_frame(name="Value").reset_index().rename(columns={"index": "Metric"})
+            else:
+                refined_summary = pd.DataFrame(refined_stats, index=[0]).T.reset_index().rename(columns={"index": "Metric", 0: "Value"})
+            refined_summary["Value"] = refined_summary["Value"].astype(str)
+            st.dataframe(refined_summary, width="stretch")
+
+            if "_equity_curve" in refined_stats:
+                eq = refined_stats["_equity_curve"].reset_index()
+                y_col = "Equity" if "Equity" in eq.columns else eq.columns[-1]
+                fig_eq = px.line(eq, x=eq.columns[0], y=y_col, title="Equity curve - refined best model")
+                st.plotly_chart(fig_eq, width="stretch")
+
+            if refined_heatmap is not None:
+                st.write("Refined optimization heatmap results")
+                heatmap_df = refined_heatmap.reset_index()
+                sort_col = "Return [%]" if "Return [%]" in heatmap_df.columns else heatmap_df.columns[-1]
+                heatmap_df = heatmap_df.sort_values(sort_col, ascending=False)
+                st.dataframe(make_display_df(heatmap_df.head(20)), width="stretch")
+
         tab1, tab2, tab3, tab4 = st.tabs(
             ["Backtestable Models", "Time Series", "Clustering / Regimes", "Outliers"]
         )
@@ -266,6 +355,12 @@ if run_btn:
                     [{"Parameter": k, "Value": str(v)} for k, v in best_row.items()]
                 )
                 st.dataframe(best_df, width="stretch")
+
+                st.write("Feature set used")
+                st.dataframe(
+                    pd.DataFrame({"Feature": prepared.feature_columns}),
+                    width="stretch",
+                )
 
                 st.write("Backtest summary")
                 if hasattr(stats, "to_frame"):
@@ -334,6 +429,8 @@ if run_btn:
             - Performs predictive model assessment for every model  
             - Optimizes backtest thresholds for every backtestable model  
             - Ranks all models using the selected objective  
+            - Applies backward feature selection to the top-ranked model  
+            - Reports the final selected feature subset  
             - Also reports time-series, clustering, and outlier diagnostics  
             """
         )
