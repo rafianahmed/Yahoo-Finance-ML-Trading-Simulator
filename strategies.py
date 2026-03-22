@@ -1,13 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
-
-import numpy as np
-import pandas as pd
-from backtesting import Strategy
 from sklearn.base import clone
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from backtesting import Strategy
 
 
 BASE_FEATURES = [
@@ -28,15 +22,19 @@ BASE_FEATURES = [
 
 
 class RegressionStrategy(Strategy):
+    _full_data = None
+
     limit_buy = 1.0
     limit_sell = -5.0
     max_depth = 15
 
     def init(self):
+        if self._full_data is None:
+            raise ValueError("RegressionStrategy requires bound prepared data via _full_data.")
+
         self.model = clone(self._full_data.model_reg)
         self.feature_columns = self._full_data.feature_columns
         self.target_column = self._full_data.regression_target
-        self.already_bought = False
         self._fit_initial_model()
 
     def _fit_initial_model(self):
@@ -46,18 +44,20 @@ class RegressionStrategy(Strategy):
         self.model.fit(X_train, y_train)
 
     def next(self):
+        if len(self.data) < self._full_data.n_train:
+            return
+
         row = self.data.df.iloc[[-1]]
         forecast_tomorrow = float(self.model.predict(row[self.feature_columns])[0])
 
         if forecast_tomorrow > self.limit_buy and not self.position:
             self.buy()
-            self.already_bought = True
         elif forecast_tomorrow < self.limit_sell and self.position:
             self.position.close()
-            self.already_bought = False
 
 
 class WalkForwardAnchored(RegressionStrategy):
+    _full_data = None
     coef_retrain = 200
 
     def next(self):
@@ -74,6 +74,7 @@ class WalkForwardAnchored(RegressionStrategy):
 
 
 class WalkForwardUnanchored(RegressionStrategy):
+    _full_data = None
     coef_retrain = 200
 
     def next(self):
@@ -90,10 +91,15 @@ class WalkForwardUnanchored(RegressionStrategy):
 
 
 class ClassificationStrategy(Strategy):
+    _full_data = None
+
     prob_buy = 0.55
     prob_sell = 0.45
 
     def init(self):
+        if self._full_data is None:
+            raise ValueError("ClassificationStrategy requires bound prepared data via _full_data.")
+
         self.model = clone(self._full_data.model_clf)
         self.feature_columns = self._full_data.feature_columns
         self.target_column = self._full_data.classification_target
@@ -108,7 +114,9 @@ class ClassificationStrategy(Strategy):
     def next(self):
         if len(self.data) < self._full_data.n_train:
             return
+
         row = self.data.df.iloc[[-1]]
+
         if hasattr(self.model, "predict_proba"):
             prob_up = float(self.model.predict_proba(row[self.feature_columns])[0][1])
         else:
