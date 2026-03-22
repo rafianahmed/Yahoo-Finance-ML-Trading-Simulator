@@ -31,6 +31,14 @@ def make_display_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def metric_card_values(best_row: pd.Series) -> tuple[str, str, str, str]:
+    best_model = str(best_row.get("model_name", "N/A"))
+    best_style = str(best_row.get("training_style", "N/A"))
+    best_return = f"{float(best_row.get('return_pct', float('nan'))):.2f}%"
+    best_sharpe = f"{float(best_row.get('sharpe_ratio', float('nan'))):.4f}"
+    return best_model, best_style, best_return, best_sharpe
+
+
 def run_full_suite(
     ticker: str,
     start: str,
@@ -214,12 +222,13 @@ if run_btn:
             st.stop()
 
         best = leaderboard.iloc[0]
+        best_model, best_style, best_return, best_sharpe = metric_card_values(best)
 
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Best model", str(best["model_name"]))
-        k2.metric("Best style", str(best["training_style"]))
-        k3.metric("Best return", f"{float(best['return_pct']):.2f}%")
-        k4.metric("Best Sharpe", f"{float(best['sharpe_ratio']):.4f}")
+        k1.metric("Best model", best_model)
+        k2.metric("Best style", best_style)
+        k3.metric("Best return", best_return)
+        k4.metric("Best Sharpe", best_sharpe)
 
         st.subheader("Automated leaderboard")
         st.dataframe(make_display_df(leaderboard), width="stretch")
