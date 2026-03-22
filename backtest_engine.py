@@ -35,6 +35,7 @@ def to_backtesting_frame(df: pd.DataFrame) -> pd.DataFrame:
 def _bind_prepared(strategy_cls, prepared):
     class BoundStrategy(strategy_cls):
         _full_data = prepared
+
     BoundStrategy.__name__ = strategy_cls.__name__
     return BoundStrategy
 
@@ -73,6 +74,9 @@ def run_backtest(
     objective: str = "Balanced",
 ):
     strategy_key = (prepared.task, prepared.training_style)
+    if strategy_key not in STRATEGY_MAP:
+        raise ValueError(f"Unsupported strategy key: {strategy_key}")
+
     raw_strategy_cls = STRATEGY_MAP[strategy_key]
     strategy_cls = _bind_prepared(raw_strategy_cls, prepared)
 
