@@ -129,13 +129,12 @@ The app then shows:
 ---
 
 ## Project structure
-
-```text
-trading_simulator/
+your-repo/
 │
 ├── app.py
 ├── ml_pipeline.py
 ├── strategies.py
 ├── backtest_engine.py
 ├── requirements.txt
+├── runtime.txt   ✅ (ADD HERE)
 └── README.md
