@@ -147,47 +147,38 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_cols:
         data[col] = pd.to_numeric(data[col], errors="coerce")
 
-    # Base returns / volatility / price structure
     data["Return_1d"] = data["Close"].pct_change() * 100
     data["Return_5d"] = data["Close"].pct_change(5) * 100
     data["Range_Pct"] = ((data["High"] - data["Low"]) / data["Close"].replace(0, np.nan)) * 100
     data["Gap_Pct"] = ((data["Open"] - data["Close"].shift(1)) / data["Close"].shift(1).replace(0, np.nan)) * 100
     data["Volume_Change"] = data["Volume"].pct_change() * 100
 
-    # Moving averages
     data["SMA_5"] = data["Close"].rolling(5).mean()
     data["SMA_10"] = data["Close"].rolling(10).mean()
     data["SMA_5_Ratio"] = data["Close"] / data["SMA_5"].replace(0, np.nan)
     data["SMA_10_Ratio"] = data["Close"] / data["SMA_10"].replace(0, np.nan)
 
-    # Multi-scale volatility
     data["Volatility_5"] = data["Return_1d"].rolling(5).std()
     data["Volatility_10"] = data["Return_1d"].rolling(10).std()
     data["Volatility_20"] = data["Return_1d"].rolling(20).std()
 
-    # Lag features
     data["Lag_Return_1"] = data["Return_1d"].shift(1)
     data["Lag_Return_2"] = data["Return_1d"].shift(2)
     data["Lag_Return_3"] = data["Return_1d"].shift(3)
 
-    # Rolling stats
     data["Rolling_Mean_5"] = data["Return_1d"].rolling(5).mean()
     data["Rolling_Max_5"] = data["Return_1d"].rolling(5).max()
     data["Rolling_Min_5"] = data["Return_1d"].rolling(5).min()
 
-    # Volume pressure
     data["Volume_SMA_5"] = data["Volume"].rolling(5).mean()
     data["Volume_Ratio"] = data["Volume"] / data["Volume_SMA_5"].replace(0, np.nan)
 
-    # Price position in daily range
     daily_range = (data["High"] - data["Low"]).replace(0, np.nan)
     data["Close_Position"] = (data["Close"] - data["Low"]) / daily_range
 
-    # Trend slopes
     data["SMA_5_Slope"] = data["SMA_5"].diff()
     data["SMA_10_Slope"] = data["SMA_10"].diff()
 
-    # Momentum indicators
     data["RSI_14"] = compute_rsi(data["Close"], 14)
 
     ema12 = data["Close"].ewm(span=12, adjust=False).mean()
@@ -196,10 +187,8 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     data["MACD_Signal"] = data["MACD"].ewm(span=9, adjust=False).mean()
     data["MACD_Hist"] = data["MACD"] - data["MACD_Signal"]
 
-    # Simple market regime feature
     data["Trend_Regime"] = (data["SMA_5"] > data["SMA_10"]).astype(int)
 
-    # Targets
     data["change_tomorrow"] = ((data["Close"].shift(-1) - data["Close"]) / data["Close"].replace(0, np.nan)) * 100
     data["change_tomorrow_direction"] = (data["change_tomorrow"] > 0).astype(int)
 
@@ -271,6 +260,7 @@ def prepare_data(
     model_name: str = "logistic_regression",
     training_style: str = "static",
     model_params: dict[str, Any] | None = None,
+    feature_columns: list[str] | None = None,
 ) -> PreparedData:
     raw = download_yahoo_data(ticker=ticker, start=start, end=end, interval=interval)
     df = engineer_features(raw)
@@ -291,9 +281,14 @@ def prepare_data(
 
     model = build_model(task=task, model_name=model_name, model_params=model_params or {})
 
+    chosen_features = feature_columns if feature_columns is not None else BASE_FEATURES
+    missing = [c for c in chosen_features if c not in df.columns]
+    if missing:
+        raise ValueError(f"Requested features missing from prepared data: {missing}")
+
     return PreparedData(
         df=df,
-        feature_columns=BASE_FEATURES,
+        feature_columns=chosen_features,
         target_column=target_column,
         model=model,
         task=task,
@@ -402,6 +397,104 @@ def get_hyperparameter_grid(task: str, model_name: str) -> list[dict[str, Any]]:
         ]
 
     return [{}]
+
+
+def _feature_selection_score(prepared: PreparedData, n_splits: int = 5) -> float:
+    scores = assess_model(prepared, n_splits=n_splits)
+
+    if prepared.task == "regression":
+        # higher is better for selection, so negate error
+        return -scores["cv_rmse"]
+
+    # classification: higher is better
+    return scores["cv_f1"]
+
+
+def backward_feature_selection(
+    prepared: PreparedData,
+    min_features: int = 5,
+    n_splits: int = 5,
+    tol: float = 1e-6,
+) -> tuple[list[str], pd.DataFrame]:
+    current_features = list(prepared.feature_columns)
+    history_rows = []
+
+    base_prepared = PreparedData(
+        df=prepared.df,
+        feature_columns=current_features,
+        target_column=prepared.target_column,
+        model=clone(prepared.model),
+        task=prepared.task,
+        model_family=prepared.model_family,
+        model_name=prepared.model_name,
+        training_style=prepared.training_style,
+        n_train=prepared.n_train,
+        model_params=prepared.model_params,
+    )
+    current_score = _feature_selection_score(base_prepared, n_splits=n_splits)
+
+    history_rows.append(
+        {
+            "step": 0,
+            "action": "start",
+            "removed_feature": None,
+            "n_features": len(current_features),
+            "score": current_score,
+            "features": ", ".join(current_features),
+        }
+    )
+
+    step = 1
+    improved = True
+
+    while improved and len(current_features) > min_features:
+        improved = False
+        best_candidate_score = current_score
+        best_feature_to_remove = None
+        best_candidate_features = current_features
+
+        for feature in current_features:
+            candidate_features = [f for f in current_features if f != feature]
+
+            candidate_prepared = PreparedData(
+                df=prepared.df,
+                feature_columns=candidate_features,
+                target_column=prepared.target_column,
+                model=clone(prepared.model),
+                task=prepared.task,
+                model_family=prepared.model_family,
+                model_name=prepared.model_name,
+                training_style=prepared.training_style,
+                n_train=prepared.n_train,
+                model_params=prepared.model_params,
+            )
+
+            candidate_score = _feature_selection_score(candidate_prepared, n_splits=n_splits)
+
+            if candidate_score > best_candidate_score + tol:
+                best_candidate_score = candidate_score
+                best_feature_to_remove = feature
+                best_candidate_features = candidate_features
+                improved = True
+
+        if improved:
+            current_features = best_candidate_features
+            current_score = best_candidate_score
+
+            history_rows.append(
+                {
+                    "step": step,
+                    "action": "remove",
+                    "removed_feature": best_feature_to_remove,
+                    "n_features": len(current_features),
+                    "score": current_score,
+                    "features": ", ".join(current_features),
+                }
+            )
+            step += 1
+
+    history_df = pd.DataFrame(history_rows)
+    return current_features, history_df
 
 
 def evaluate_time_series_suite(df: pd.DataFrame) -> pd.DataFrame:
