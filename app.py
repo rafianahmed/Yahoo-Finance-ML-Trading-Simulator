@@ -16,6 +16,9 @@ from ml_pipeline import (
     get_model_registry,
     prepare_data,
 )
+from regime_extensions import attach_regime_labels, regime_summary
+from deep_extensions import evaluate_lstm_models
+from shap_extensions import compute_shap_importance
 
 st.set_page_config(page_title="Yahoo Finance ML Trading Simulator", layout="wide")
 st.title("Yahoo Finance ML Trading Simulator")
@@ -198,6 +201,13 @@ with st.sidebar:
         ["Balanced", "Sharpe Ratio", "Return [%]"],
         index=0,
     )
+
+    st.markdown("---")
+    st.subheader("Extensions")
+    enable_regime_extension = st.checkbox("Enable regime-aware diagnostics", value=True)
+    enable_dl_extension = st.checkbox("Enable deep learning extension", value=False)
+    enable_shap_extension = st.checkbox("Enable SHAP explainability", value=True)
+
     run_btn = st.button("Run simulation", type="primary")
 
 
@@ -222,6 +232,17 @@ if run_btn:
         if leaderboard.empty:
             st.error("No backtestable models completed successfully.")
             st.stop()
+
+        if enable_regime_extension:
+            raw_df = attach_regime_labels(raw_df)
+            regime_df = regime_summary(raw_df)
+        else:
+            regime_df = pd.DataFrame()
+
+        if enable_dl_extension:
+            dl_df = evaluate_lstm_models(raw_df, BASE_FEATURES)
+        else:
+            dl_df = pd.DataFrame()
 
         best = leaderboard.iloc[0]
         best_model, best_style, best_return, best_sharpe = metric_card_values(best)
@@ -249,6 +270,8 @@ if run_btn:
                 best_key = key
                 break
 
+        shap_df = pd.DataFrame()
+
         if best_key is not None:
             best_bundle = details[best_key]
             best_prepared = best_bundle["prepared"]
@@ -274,6 +297,22 @@ if run_btn:
                 optimize=True,
                 objective=ranking_objective,
             )
+
+            if enable_shap_extension:
+                try:
+                    X_best = refined_prepared.df[refined_prepared.feature_columns]
+                    y_best = refined_prepared.df[refined_prepared.target_column]
+
+                    model = refined_prepared.model
+                    model.fit(X_best, y_best)
+
+                    sample_n = min(len(X_best), 300)
+                    shap_df = compute_shap_importance(
+                        model,
+                        X_best.sample(sample_n, random_state=42),
+                    )
+                except Exception:
+                    shap_df = pd.DataFrame()
 
             st.markdown("---")
             st.subheader("Best model refinement with backward feature selection")
@@ -322,8 +361,16 @@ if run_btn:
                 heatmap_df = heatmap_df.sort_values(sort_col, ascending=False)
                 st.dataframe(make_display_df(heatmap_df.head(20)), width="stretch")
 
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["Backtestable Models", "Time Series", "Clustering / Regimes", "Outliers"]
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+            [
+                "Backtestable Models",
+                "Time Series",
+                "Clustering / Regimes",
+                "Outliers",
+                "Regime Extension",
+                "Deep Learning Extension",
+                "SHAP Explainability",
+            ]
         )
 
         with tab1:
@@ -420,6 +467,43 @@ if run_btn:
             else:
                 st.dataframe(make_display_df(outlier_df), width="stretch")
 
+        with tab5:
+            st.subheader("Regime-aware extension")
+            if not enable_regime_extension or regime_df.empty:
+                st.info("Regime extension not enabled.")
+            else:
+                st.dataframe(make_display_df(regime_df), width="stretch")
+                fig_regime_ext = px.scatter(
+                    raw_df.tail(300),
+                    x="Date",
+                    y="Close",
+                    color="Market_Regime",
+                    title="Recent market regimes",
+                )
+                st.plotly_chart(fig_regime_ext, width="stretch")
+
+        with tab6:
+            st.subheader("Deep learning extension")
+            if not enable_dl_extension or dl_df.empty:
+                st.info("Deep learning extension not enabled or torch not installed.")
+            else:
+                st.dataframe(make_display_df(dl_df), width="stretch")
+
+        with tab7:
+            st.subheader("SHAP explainability")
+            if not enable_shap_extension or shap_df.empty:
+                st.info("SHAP extension not enabled or unavailable.")
+            else:
+                st.dataframe(make_display_df(shap_df.head(20)), width="stretch")
+                fig_shap = px.bar(
+                    shap_df.head(15),
+                    x="importance",
+                    y="feature",
+                    orientation="h",
+                    title="Top SHAP feature importances",
+                )
+                st.plotly_chart(fig_shap, width="stretch")
+
         st.markdown("---")
         st.subheader("How this automation works")
         st.markdown(
@@ -431,6 +515,9 @@ if run_btn:
             - Ranks all models using the selected objective  
             - Applies backward feature selection to the top-ranked model  
             - Reports the final selected feature subset  
+            - Adds regime-aware diagnostics as an extension  
+            - Adds deep learning evaluation as an extension  
+            - Adds SHAP explainability for the refined best model  
             - Also reports time-series, clustering, and outlier diagnostics  
             """
         )
