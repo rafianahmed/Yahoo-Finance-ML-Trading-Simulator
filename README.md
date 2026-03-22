@@ -1,240 +1,227 @@
 # Yahoo Finance ML Trading Simulator
 
-A fully automated machine learning trading simulation system that downloads financial data, engineers predictive features, trains multiple models, evaluates performance, optimizes trading strategies, and ranks results — all from a single click.
+A fully automated machine learning trading simulation platform that integrates data collection, feature engineering, predictive modeling, walk-forward retraining, strategy optimization, backtesting, feature selection, and diagnostics into a single interactive system.
+
+The user only needs to:
+
+1. Select a ticker
+2. Click **Run Simulation**
+
+The system performs everything else automatically.
 
 ---
 
-## Overview
+# 1. System Overview
 
-This project is an end-to-end quantitative trading research environment built using:
+This simulator is designed as an **end-to-end quantitative research pipeline** that mimics real-world ML-based trading workflows.
 
-* **Yahoo Finance data**
-* **Machine Learning (classification + regression)**
-* **Time-series validation**
-* **Walk-forward retraining**
-* **Strategy optimization**
-* **Backtesting simulation**
+It combines:
 
-The system is designed to simulate how ML models behave in realistic trading conditions.
-
----
-
-## How the simulator works (Pipeline)
-
-When you select a ticker and click **Run simulation**, the system performs:
-
-### 1. Data Collection
-
-* Downloads OHLCV data from Yahoo Finance
-* Supports multiple tickers and time intervals
+* Financial data processing
+* Predictive modeling (classification + regression)
+* Time-series validation
+* Strategy optimization
+* Walk-forward retraining
+* Backtesting simulation
+* Feature selection
+* Model comparison and ranking
 
 ---
 
-### 2. Feature Engineering
+# 2. End-to-End Pipeline
 
-Transforms raw price data into predictive signals.
+The simulator follows this workflow:
 
-#### Price & Returns
+```text
+Yahoo Finance Data
+→ Data Cleaning
+→ Feature Engineering
+→ Target Construction
+→ Model Training
+→ Model Evaluation (CV)
+→ Strategy Generation
+→ Threshold Optimization
+→ Backtesting
+→ Model Ranking
+→ Backward Feature Selection (Best Model)
+→ Final Refined Results
+```
+
+---
+
+# 3. Data Collection
+
+Data is fetched from **Yahoo Finance** using:
+
+* Ticker symbol (e.g., AAPL, MSFT, TSLA)
+* Time range
+* Interval (1d, 1wk, 1mo)
+
+### Data fields used:
+
+* Open
+* High
+* Low
+* Close
+* Volume
+* Date
+
+---
+
+# 4. Data Cleaning & Preprocessing
+
+The system performs:
+
+* Data type conversion (numeric enforcement)
+* Missing value handling (drop invalid rows)
+* Date normalization and sorting
+* Removal of infinite values
+* Rolling window stabilization (removes early NaNs)
+
+👉 Ensures the dataset is fully usable for ML models
+
+---
+
+# 5. Feature Engineering
+
+The simulator builds a **multi-dimensional feature space** capturing:
+
+---
+
+## 5.1 Price & Return Features
 
 * 1-day return
 * 5-day return
-* intraday range %
-* overnight gap %
+* Intraday range (%)
+* Overnight gap (%)
+* Close position within daily range
 
-#### Trend Features
+---
+
+## 5.2 Trend Features
 
 * SMA (5, 10)
 * SMA ratios
-* SMA slopes
+* SMA slopes (trend strength)
 
-#### Volatility
+---
 
-* rolling volatility (5, 10, 20)
+## 5.3 Volatility Features
 
-#### Momentum Indicators
+* 5-day volatility
+* 10-day volatility
+* 20-day volatility
+
+---
+
+## 5.4 Momentum Indicators
 
 * RSI (14)
 * MACD
-* MACD signal & histogram
-
-#### Lag Features (Time Dependency)
-
-* lag returns (1, 2, 3)
-
-#### Rolling Statistics
-
-* rolling mean / max / min
-
-#### Volume Signals
-
-* volume change
-* volume moving average
-* volume ratio
-
-#### Market Structure
-
-* close position within daily range
-* trend regime indicator
+* MACD signal
+* MACD histogram
 
 ---
 
-### 3. Target Creation
+## 5.5 Lag Features (Time Dependency)
 
-#### Regression Target
-
-* Predict next-day % return
-
-#### Classification Target
-
-* Predict next-day direction (up/down)
+* Lag return (1, 2, 3)
 
 ---
 
-## Models Used
+## 5.6 Rolling Statistics
 
-The simulator runs **multiple models automatically**
+* Rolling mean (5)
+* Rolling max (5)
+* Rolling min (5)
 
-### Regression Models
+---
+
+## 5.7 Volume Features
+
+* Volume change (%)
+* Volume moving average
+* Volume ratio
+
+---
+
+## 5.8 Market Regime Feature
+
+* Trend regime (SMA5 > SMA10)
+
+---
+
+# 6. Target Construction
+
+Two prediction tasks are created:
+
+---
+
+## 6.1 Regression Target
+
+Predicts:
+
+* Next-day return (%)
+
+---
+
+## 6.2 Classification Target
+
+Predicts:
+
+* Direction (Up / Down)
+
+---
+
+# 7. Models Used
+
+The simulator runs a **full model suite automatically**
+
+---
+
+## 7.1 Regression Models
 
 * Multiple Linear Regression ✅
 * Decision Tree Regressor
 * Random Forest Regressor
 * Gradient Boosting Regressor
-* XGBoost (optional)
+* XGBoost Regressor (optional)
 
-### Classification Models
+### Important
+
+This is **Multiple Linear Regression**, meaning:
+
+* many features → one prediction
+* not a single-variable model
+
+---
+
+## 7.2 Classification Models
 
 * Logistic Regression
 * Decision Tree Classifier
 * Random Forest Classifier
 * Gradient Boosting Classifier
-* XGBoost (optional)
+* XGBoost Classifier (optional)
 
 ---
 
-## What is Multiple Linear Regression?
+# 8. Model Evaluation
 
-The system uses:
-
-👉 **Multiple Linear Regression (not single-variable regression)**
-
-Because predictions are based on **many features simultaneously**:
-
-* price
-* momentum
-* volatility
-* lag signals
-* technical indicators
+Uses **Time Series Cross Validation**
 
 ---
 
-## Training Styles
-
-Each model is tested under different learning strategies:
-
-### Static
-
-* Model trained once and used throughout
-
-### Walk-Forward Anchored
-
-* Model retrained using all past data
-
-### Walk-Forward Unanchored
-
-* Model retrained using recent rolling window only
-
-👉 This simulates real-world adaptive learning
-
----
-
-## Strategy Logic
-
-### Classification Strategy
-
-* Buy if probability of price increase ≥ threshold
-* Sell if probability falls below threshold
-
-### Regression Strategy
-
-* Buy if predicted return ≥ buy threshold
-* Sell if predicted return ≤ sell threshold
-
----
-
-## Optimization
-
-The system automatically optimizes:
-
-### Model Hyperparameters
-
-* tree depth
-* learning rate
-* number of estimators
-
-### Trading Strategy Parameters
-
-* buy/sell thresholds
-
----
-
-## Ranking Objectives
-
-The simulator evaluates strategies using:
-
-### 1. Balanced (Recommended)
-
-Combines:
-
-* Sharpe Ratio
-* Return %
-* Drawdown penalty
-* Win rate
-* trade frequency
-
-👉 Best for realistic trading
-
----
-
-### 2. Sharpe Ratio
-
-* Measures risk-adjusted return
-* Prefers stable strategies
-
----
-
-### 3. Return [%]
-
-* Maximizes profit only
-* Ignores risk
-
----
-
-## Backtesting Engine
-
-Uses **backtesting.py** to simulate trading.
-
-### Outputs:
-
-* Total Return %
-* Sharpe Ratio
-* Max Drawdown %
-* Win Rate %
-* Number of trades
-* Equity curve
-
----
-
-## Model Evaluation
-
-### Regression Metrics
+## 8.1 Regression Metrics
 
 * MSE
 * RMSE
 * MAE
 * R²
 
-### Classification Metrics
+---
+
+## 8.2 Classification Metrics
 
 * Accuracy
 * Precision
@@ -244,51 +231,251 @@ Uses **backtesting.py** to simulate trading.
 
 ---
 
-## Additional Analysis Modules
+# 9. Training Styles
 
-### Time-Series Baselines
-
-* naive prediction
-* moving average prediction
-* Prophet (optional)
+Each model is tested under:
 
 ---
 
-### Clustering (Market Regimes)
+## Static
+
+* Train once, no updates
+
+---
+
+## Walk-Forward Anchored
+
+* Retrain using all past data
+
+---
+
+## Walk-Forward Unanchored
+
+* Retrain using rolling recent window
+
+---
+
+👉 This simulates real market adaptation
+
+---
+
+# 10. Strategy Generation
+
+Predictions are converted into trading rules:
+
+---
+
+## Classification Strategy
+
+* Buy if probability ≥ threshold
+* Sell if probability ≤ threshold
+
+---
+
+## Regression Strategy
+
+* Buy if predicted return ≥ threshold
+* Sell if predicted return ≤ threshold
+
+---
+
+# 11. Optimization
+
+The system performs **two levels of optimization**
+
+---
+
+## 11.1 Hyperparameter Optimization
+
+Searches across:
+
+* tree depth
+* learning rate
+* number of estimators
+* regularization
+
+---
+
+## 11.2 Strategy Threshold Optimization
+
+Classification:
+
+* prob_buy
+* prob_sell
+
+Regression:
+
+* limit_buy
+* limit_sell
+
+Uses:
+
+* `backtesting.py` optimizer
+* `sambo` optimization engine
+
+---
+
+# 12. Backtesting
+
+Simulates trading using historical data.
+
+---
+
+## Metrics reported:
+
+* Return (%)
+* Sharpe Ratio
+* Max Drawdown (%)
+* Win Rate (%)
+* Number of trades
+* Equity curve
+
+---
+
+# 13. Ranking System
+
+Models are ranked using:
+
+---
+
+## Balanced (Recommended)
+
+Combines:
+
+* Sharpe Ratio
+* Return
+* Drawdown penalty
+* Win rate
+* trade count penalty
+
+---
+
+## Sharpe Ratio
+
+* Focuses on risk-adjusted performance
+
+---
+
+## Return (%)
+
+* Focuses only on profit
+
+---
+
+# 14. Backward Feature Selection
+
+After ranking:
+
+👉 The best model is refined using **Backward Selection**
+
+---
+
+## Process
+
+* Start with all features
+* Remove one feature at a time
+* Keep removal if performance improves
+* Stop when no improvement
+
+---
+
+## Why it is used
+
+* Removes noisy variables
+* Reduces overfitting
+* Improves stability
+* Finds minimal optimal feature set
+
+---
+
+## Output
+
+* Selected features
+* Selection history
+* Improved model performance
+* Refined backtest
+
+---
+
+# 15. Additional Diagnostics
+
+---
+
+## Time-Series Models
+
+* Naive prediction
+* Moving average
+* Prophet (optional)
+
+Metrics:
+
+* MSE, RMSE, MAE, MAPE
+
+---
+
+## Clustering (Market Regimes)
 
 * KMeans
 * Silhouette score
 
 ---
 
-### Outlier Detection
+## Outlier Detection
 
 * Isolation Forest
-* anomaly rate %
+* Anomaly rate
 
 ---
 
-## Automation
+# 16. Visualization Outputs
 
-The simulator is **fully automated**:
+The app provides:
 
-👉 Runs ALL models
-👉 Evaluates ALL strategies
-👉 Optimizes parameters
-👉 Compares results
-👉 Ranks best model
-
-User only selects:
-
-* ticker
-* date range
+* Price chart
+* Equity curves
+* Optimization heatmaps
+* Model leaderboard
+* Feature selection history
+* Clustering scatter plots
+* Performance tables
 
 ---
 
-## Project Structure
+# 17. What You Get (Final Output)
 
-```
-Yahoo-Finance-ML-Trading-Simulator/
+When you run the simulation, you receive:
+
+* Best model
+* Best training style
+* Best hyperparameters
+* Best trading thresholds
+* Full leaderboard
+* Model evaluation metrics
+* Backtest performance
+* Equity curve
+* Feature importance (via selection)
+* Final selected feature subset
+
+---
+
+# 18. Automation
+
+The system automatically:
+
+* runs all models
+* evaluates all models
+* optimizes all strategies
+* compares all results
+* ranks models
+* selects best model
+* refines best model
+
+---
+
+# 19. Project Structure
+
+```text
+your-repo/
 ├── app.py
 ├── ml_pipeline.py
 ├── strategies.py
@@ -300,73 +487,67 @@ Yahoo-Finance-ML-Trading-Simulator/
 
 ---
 
-## How to Run
+# 20. How to Run
 
-### Install dependencies
-
-```
+```bash
 pip install -r requirements.txt
-```
-
-### Run app
-
-```
 streamlit run app.py
 ```
 
 ---
 
-## Key Insights
+# 21. Key Insights
 
-* High prediction accuracy ≠ profitable trading
-* Walk-forward testing prevents overfitting
+* Prediction accuracy ≠ trading profitability
+* Walk-forward testing is essential
 * Feature engineering is critical
-* Optimization improves execution, not prediction
-* Balanced objective gives best real-world performance
+* Optimization improves execution
+* Feature selection reduces noise
 
 ---
 
-## Limitations
+# 22. Limitations
 
-* Not a live trading system
-* No slippage or market impact modeling
-* Yahoo Finance data limitations
-* Some models optional (XGBoost, Prophet)
+* Not live trading
+* No slippage modeling
+* Yahoo Finance limitations
+* Diagnostics are not trading signals
 
 ---
 
-## Future Improvements
+# 23. Future Improvements
 
 * Portfolio optimization
-* multi-asset trading
-* deep learning (LSTM, Transformers)
-* feature importance (SHAP)
-* regime-switching strategies
+* Deep learning models
+* SHAP explainability
+* Regime-based strategies
+* Multi-asset trading
 
 ---
 
-## Summary
+# 24. Summary
 
-This system is a complete ML trading research framework that:
+This project is a complete ML trading system that:
 
 * builds advanced features
-* runs multiple ML models
-* applies realistic training methods
-* optimizes trading strategies
+* trains multiple models
+* applies realistic validation
+* optimizes strategies
 * evaluates performance
-* ranks models automatically
+* selects best model
+* refines it using feature selection
 
-All from a single click.
-
----
-
-## Author
-
-Rafian Ahmed Raad
+All fully automated.
 
 ---
 
-## Disclaimer
+# 25. Author
+
+**Rafian Ahmed Raad**
+
+---
+
+# 26. Disclaimer
 
 This project is for educational and research purposes only.
 It is not financial advice.
