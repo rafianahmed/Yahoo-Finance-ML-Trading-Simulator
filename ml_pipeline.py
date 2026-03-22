@@ -127,6 +127,19 @@ def download_yahoo_data(
     raise ValueError(f"Yahoo Finance download failed for {ticker}: {last_error}")
 
 
+def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     data = df.copy()
 
@@ -134,17 +147,59 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     for col in numeric_cols:
         data[col] = pd.to_numeric(data[col], errors="coerce")
 
+    # Base returns / volatility / price structure
     data["Return_1d"] = data["Close"].pct_change() * 100
     data["Return_5d"] = data["Close"].pct_change(5) * 100
     data["Range_Pct"] = ((data["High"] - data["Low"]) / data["Close"].replace(0, np.nan)) * 100
     data["Gap_Pct"] = ((data["Open"] - data["Close"].shift(1)) / data["Close"].shift(1).replace(0, np.nan)) * 100
     data["Volume_Change"] = data["Volume"].pct_change() * 100
+
+    # Moving averages
     data["SMA_5"] = data["Close"].rolling(5).mean()
     data["SMA_10"] = data["Close"].rolling(10).mean()
     data["SMA_5_Ratio"] = data["Close"] / data["SMA_5"].replace(0, np.nan)
     data["SMA_10_Ratio"] = data["Close"] / data["SMA_10"].replace(0, np.nan)
-    data["Volatility_5"] = data["Return_1d"].rolling(5).std()
 
+    # Multi-scale volatility
+    data["Volatility_5"] = data["Return_1d"].rolling(5).std()
+    data["Volatility_10"] = data["Return_1d"].rolling(10).std()
+    data["Volatility_20"] = data["Return_1d"].rolling(20).std()
+
+    # Lag features
+    data["Lag_Return_1"] = data["Return_1d"].shift(1)
+    data["Lag_Return_2"] = data["Return_1d"].shift(2)
+    data["Lag_Return_3"] = data["Return_1d"].shift(3)
+
+    # Rolling stats
+    data["Rolling_Mean_5"] = data["Return_1d"].rolling(5).mean()
+    data["Rolling_Max_5"] = data["Return_1d"].rolling(5).max()
+    data["Rolling_Min_5"] = data["Return_1d"].rolling(5).min()
+
+    # Volume pressure
+    data["Volume_SMA_5"] = data["Volume"].rolling(5).mean()
+    data["Volume_Ratio"] = data["Volume"] / data["Volume_SMA_5"].replace(0, np.nan)
+
+    # Price position in daily range
+    daily_range = (data["High"] - data["Low"]).replace(0, np.nan)
+    data["Close_Position"] = (data["Close"] - data["Low"]) / daily_range
+
+    # Trend slopes
+    data["SMA_5_Slope"] = data["SMA_5"].diff()
+    data["SMA_10_Slope"] = data["SMA_10"].diff()
+
+    # Momentum indicators
+    data["RSI_14"] = compute_rsi(data["Close"], 14)
+
+    ema12 = data["Close"].ewm(span=12, adjust=False).mean()
+    ema26 = data["Close"].ewm(span=26, adjust=False).mean()
+    data["MACD"] = ema12 - ema26
+    data["MACD_Signal"] = data["MACD"].ewm(span=9, adjust=False).mean()
+    data["MACD_Hist"] = data["MACD"] - data["MACD_Signal"]
+
+    # Simple market regime feature
+    data["Trend_Regime"] = (data["SMA_5"] > data["SMA_10"]).astype(int)
+
+    # Targets
     data["change_tomorrow"] = ((data["Close"].shift(-1) - data["Close"]) / data["Close"].replace(0, np.nan)) * 100
     data["change_tomorrow_direction"] = (data["change_tomorrow"] > 0).astype(int)
 
@@ -166,7 +221,7 @@ def get_model_registry() -> dict[str, dict[str, Any]]:
             "gradient_boosting_classifier": GradientBoostingClassifier(random_state=42),
         },
         "regression": {
-            "linear_regression": LinearRegression(),
+            "multiple_linear_regression": LinearRegression(),
             "decision_tree_regressor": DecisionTreeRegressor(random_state=42),
             "random_forest_regressor": RandomForestRegressor(random_state=42, n_estimators=200, n_jobs=-1),
             "gradient_boosting_regressor": GradientBoostingRegressor(random_state=42),
@@ -317,10 +372,11 @@ def assess_model(prepared: PreparedData, n_splits: int = 5) -> dict[str, float]:
 
 
 def get_hyperparameter_grid(task: str, model_name: str) -> list[dict[str, Any]]:
-    if model_name in {"linear_regression", "logistic_regression"}:
-        if model_name == "logistic_regression":
-            return [{"C": c} for c in [0.1, 1.0, 3.0]]
+    if model_name == "multiple_linear_regression":
         return [{}]
+
+    if model_name == "logistic_regression":
+        return [{"C": c} for c in [0.1, 1.0, 3.0]]
 
     if "decision_tree" in model_name:
         return [{"max_depth": d} for d in [3, 5, 8, 12]]
